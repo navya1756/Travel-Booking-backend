@@ -855,30 +855,236 @@ def get_booking(booking_id):
             cursor.close()
         if mydb:
             mydb.close()
+@app.route('/api/bookings/<int:booking_id>', methods=['PUT'])
+def customize_booking(booking_id):
+    mydb = None
+    cursor = None
+    try:
+        # Check login
+        if not session.get("userid"):
+            return jsonify({
+                "status": "failed",
+                "message": "Please login first"
+            }), 401
+
+        data = request.get_json(silent=True)
+        print("CONTENT TYPE:", request.content_type)
+        print("RAW DATA:", request.data)
+        print("JSON DATA:", data)
+
+        if not data:
+            return jsonify({
+                "status": "failed",
+                "message": "No booking data given"
+            }), 400
+
+        # Get values from request
+        name = data.get("name", "").strip()
+        phone = data.get("phone", "").strip()
+        travel_date = data.get("travel_date", "").strip()
+        persons = data.get("persons")
+        message = data.get("message", "").strip()
+
+        # Validation
+        if not name:
+            return jsonify({
+                "status": "failed",
+                "message": "Name required"
+            }), 400
+
+        if not phone:
+            return jsonify({
+                "status": "failed",
+                "message": "Phone required"
+            }), 400
+
+        if not travel_date:
+            return jsonify({
+                "status": "failed",
+                "message": "Travel date required"
+            }), 400
+
+        if persons is None or persons == "":
+            return jsonify({
+                "status": "failed",
+                "message": "Number of persons required"
+            }), 400
+
+        # Convert persons to integer
+        try:
+            persons = int(persons)
+        except (ValueError, TypeError):
+            return jsonify({
+                "status": "failed",
+                "message": "Persons must be a number"
+            }), 400
+
+        if persons <= 0:
+            return jsonify({
+                "status": "failed",
+                "message": "Persons must be greater than zero"
+            }), 400
+
+        # Validate date format
+        try:
+            datetime.strptime(travel_date, "%Y-%m-%d")
+        except ValueError:
+            return jsonify({
+                "status": "failed",
+                "message": "Travel date must be YYYY-MM-DD"
+            }), 400
+
+        mydb = get_db_connection()
+        cursor = mydb.cursor(buffered=True)
+
+        # Check that this booking belongs to logged-in user
+        cursor.execute("""
+            SELECT booking_id, status
+            FROM bookings
+            WHERE booking_id = %s AND userid = %s
+        """, [booking_id, session.get("userid")])
+
+        booking = cursor.fetchone()
+
+        if not booking:
+            return jsonify({
+                "status": "failed",
+                "message": "Booking not found"
+            }), 404
+
+        # Don't allow customization after cancellation
+        if booking[1] == "Cancelled":
+            return jsonify({
+                "status": "failed",
+                "message": "Cancelled booking cannot be customized"
+            }), 400
+
+        # Update booking
+        cursor.execute("""
+            UPDATE bookings
+            SET name = %s,
+                phone = %s,
+                travel_date = %s,
+                persons = %s,
+                message = %s
+            WHERE booking_id = %s
+            AND userid = %s
+        """, (
+            name,
+            phone,
+            travel_date,
+            persons,
+            message,
+            booking_id,
+            session.get("userid")
+        ))
+
+        mydb.commit()
+
+        return jsonify({
+            "status": "success",
+            "message": "Booking customized successfully",
+            "booking_id": booking_id
+        }), 200
+
+    except Exception as e:
+
+        if mydb:
+            mydb.rollback()
+
+        print("CUSTOMIZE BOOKING ERROR:", e)
+
+        return jsonify({
+            "status": "failed",
+            "message": str(e)
+        }), 500
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if mydb:
+            mydb.close()
 
 @app.route('/api/bookings/<int:booking_id>', methods=['DELETE'])
 def cancel_booking(booking_id):
     mydb = None
     cursor = None
+
     try:
+        # Check login
         if not session.get("userid"):
-            return jsonify({"status": "failed","message": "Please login first"}), 401
+            return jsonify({
+                "status": "failed",
+                "message": "Please login first"
+            }), 401
+
         mydb = get_db_connection()
         cursor = mydb.cursor(buffered=True)
-        cursor.execute("""SELECT booking_id FROM bookings WHERE booking_id = %s AND  userid = %s""", [booking_id,session.get("userid")])
+
+        # Check whether this booking belongs to the logged-in user
+        cursor.execute("""
+            SELECT booking_id, status
+            FROM bookings
+            WHERE booking_id = %s
+            AND userid = %s
+        """, [
+            booking_id,
+            session.get("userid")
+        ])
+
         booking = cursor.fetchone()
+
+        # Booking not found
         if not booking:
-            return jsonify({"status": "failed","message": "Booking not found"}), 404
-        cursor.execute("""UPDATE bookings SET status = 'Cancelled' WHERE booking_id = %s AND userid = %s""", [booking_id,session.get("userid")])
+            return jsonify({
+                "status": "failed",
+                "message": "Booking not found"
+            }), 404
+
+        # Already cancelled
+        if booking[1] == "Cancelled":
+            return jsonify({
+                "status": "failed",
+                "message": "Booking is already cancelled"
+            }), 400
+
+        # Cancel booking
+        cursor.execute("""
+            UPDATE bookings
+            SET status = 'Cancelled'
+            WHERE booking_id = %s
+            AND userid = %s
+        """, [
+            booking_id,
+            session.get("userid")
+        ])
+
         mydb.commit()
-        return jsonify({"status": "success","message": "Booking cancelled successfully"}), 200
+
+        return jsonify({
+            "status": "success",
+            "message": "Booking cancelled successfully"
+        }), 200
+
     except Exception as e:
-        mydb.rollback()
+
+        if mydb:
+            mydb.rollback()
+
         print("CANCEL BOOKING ERROR:", e)
-        return jsonify({"status": "failed","message": str(e)}), 500
+
+        return jsonify({
+            "status": "failed",
+            "message": str(e)
+        }), 500
+
     finally:
+
         if cursor:
             cursor.close()
+
         if mydb:
             mydb.close()
 
